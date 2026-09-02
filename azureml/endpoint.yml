@@ -1,0 +1,4 @@
+$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineEndpoint.schema.json
+name: ue-rating-model-endpoint
+auth_mode: key
+description: UE rating model POC endpoint for real-time scoring.

@@ -1,0 +1,18 @@
+$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineDeployment.schema.json
+name: green
+endpoint_name: ue-rating-model-endpoint
+description: Rating model version 2 deployment for blue/green release demonstration.
+model:
+  path: ../model
+code_configuration:
+  code: ../src
+  scoring_script: score.py
+environment:
+  conda_file: ./conda.yml
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+instance_type: Standard_DS3_v2
+instance_count: 1
+app_insights_enabled: true
+request_settings:
+  request_timeout_ms: 5000
+  max_concurrent_requests_per_instance: 2

@@ -1,0 +1,59 @@
+openapi: 3.0.1
+info:
+  title: UE Rating Model API
+  version: "1.0"
+  description: POC API for scoring a rating model through Azure API Management.
+servers:
+  - url: https://placeholder.azure-api.net/rating/v1
+paths:
+  /score:
+    post:
+      operationId: scoreRating
+      summary: Score a policy rating request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - state
+                - line_of_business
+                - building_value
+                - deductible
+                - protection_class
+                - years_in_business
+                - prior_claims_3yr
+                - sprinkler
+              properties:
+                state:
+                  type: string
+                  example: NY
+                line_of_business:
+                  type: string
+                  example: property
+                building_value:
+                  type: number
+                  example: 1250000
+                deductible:
+                  type: number
+                  example: 10000
+                protection_class:
+                  type: integer
+                  example: 4
+                years_in_business:
+                  type: integer
+                  example: 12
+                prior_claims_3yr:
+                  type: integer
+                  example: 1
+                sprinkler:
+                  type: boolean
+                  example: true
+      responses:
+        "200":
+          description: Rating result
+          content:
+            application/json:
+              schema:
+                type: object

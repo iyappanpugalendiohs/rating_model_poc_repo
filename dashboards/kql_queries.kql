@@ -1,0 +1,25 @@
+// APIM request volume and latency by API and operation
+ApiManagementGatewayLogs
+| where TimeGenerated > ago(24h)
+| summarize Calls=count(), AvgLatencyMs=avg(TotalTime), P95LatencyMs=percentile(TotalTime, 95), Errors=countif(ResponseCode >= 400) by ApiId, OperationId, bin(TimeGenerated, 15m)
+| order by TimeGenerated desc
+
+// APIM 5xx errors
+ApiManagementGatewayLogs
+| where TimeGenerated > ago(24h)
+| where ResponseCode >= 500
+| project TimeGenerated, ApiId, OperationId, ResponseCode, BackendResponseCode, TotalTime, CallerIpAddress, RequestId
+| order by TimeGenerated desc
+
+// Azure ML endpoint traffic logs. Table names are created after diagnostic settings are enabled and traffic is generated.
+AmlOnlineEndpointTrafficLog
+| where TimeGenerated > ago(24h)
+| summarize Requests=count(), AvgDurationMs=avg(DurationMs), P95DurationMs=percentile(DurationMs, 95) by EndpointName, DeploymentName, bin(TimeGenerated, 15m)
+| order by TimeGenerated desc
+
+// Azure ML console logs for container exceptions
+AmlOnlineEndpointConsoleLog
+| where TimeGenerated > ago(24h)
+| where Message has_any ("ERROR", "Exception", "Traceback")
+| project TimeGenerated, EndpointName, DeploymentName, InstanceId, Message
+| order by TimeGenerated desc

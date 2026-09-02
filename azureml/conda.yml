@@ -1,0 +1,8 @@
+name: ue-rating-model-poc
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip=24.3
+  - pip:
+      - azureml-inference-server-http==1.4.0

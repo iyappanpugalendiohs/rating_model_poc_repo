@@ -1,0 +1,6 @@
+{
+  "model_name": "ue-rating-model-poc",
+  "model_version": "1.0.0",
+  "owner": "UE Data Science / Actuarial",
+  "purpose": "POC model for demonstrating deployment, API governance, monitoring, release, and rollback."
+}

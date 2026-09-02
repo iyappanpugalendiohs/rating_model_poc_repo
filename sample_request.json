@@ -1,0 +1,10 @@
+{
+  "state": "NY",
+  "line_of_business": "property",
+  "building_value": 1250000,
+  "deductible": 10000,
+  "protection_class": 4,
+  "years_in_business": 12,
+  "prior_claims_3yr": 1,
+  "sprinkler": true
+}
