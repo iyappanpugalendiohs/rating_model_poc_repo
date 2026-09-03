@@ -1,84 +1,298 @@
-name: Build, Register and Deploy Rating Model - Python 3.14
+name: Build and Deploy UE Rating Model
+
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "requirements.txt"
+      - "sample_request.json"
+
   workflow_dispatch:
-    inputs:
-      model_version:
-        description: Azure ML model version to release (1 or 2 for this POC)
-        required: true
-        default: '1'
-        type: choice
-        options: ['1', '2']
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
-  build-register-deploy:
+
+  build-test-deploy:
+
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
 
     steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      # -------------------------------------------------------
+      # Checkout GitHub repository
+      # -------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      # -------------------------------------------------------
+      # Python 3.14
+      # -------------------------------------------------------
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
+          python-version: "3.14"
 
-      - name: Install and test on Python 3.14
+
+      # -------------------------------------------------------
+      # Install dependencies
+      # -------------------------------------------------------
+
+      - name: Install dependencies
         run: |
           python --version
           python -m pip install --upgrade pip
           python -m pip install --only-binary=:all: -r requirements.txt
+
+
+      # -------------------------------------------------------
+      # Unit tests
+      # -------------------------------------------------------
+
+      - name: Run unit tests
+        run: |
           python -m pytest -q
 
-      - name: Build immutable rating-model artifact
-        run: |
-          SEMVER="${{ inputs.model_version }}.0.0"
-          python src/build_rating_model.py --version "$SEMVER" --output-dir "artifacts/rating-model-v${{ inputs.model_version }}"
-          python src/local_artifact_test.py --model-dir "artifacts/rating-model-v${{ inputs.model_version }}" --request sample_request.json
 
-      - name: Azure login using OIDC
+      # -------------------------------------------------------
+      # Define BUSINESS version
+      #
+      # Azure ML technical version will be calculated later.
+      # Business model stays in V1 family.
+      # -------------------------------------------------------
+
+      - name: Define business model version
+        id: business_version
+        shell: bash
+        run: |
+          BUSINESS_VERSION="1.0.${GITHUB_RUN_NUMBER}"
+
+          echo "Business model version: $BUSINESS_VERSION"
+
+          echo "version=$BUSINESS_VERSION" >> "$GITHUB_OUTPUT"
+
+
+      # -------------------------------------------------------
+      # Build model
+      # -------------------------------------------------------
+
+      - name: Build Rating Model
+        run: |
+          mkdir -p artifacts/rating-model
+
+          python src/build_rating_model.py \
+            --version "${{ steps.business_version.outputs.version }}" \
+            --output-dir artifacts/rating-model
+
+
+      # -------------------------------------------------------
+      # Local artifact test
+      # -------------------------------------------------------
+
+      - name: Test built model
+        run: |
+          python src/local_artifact_test.py \
+            --model-dir artifacts/rating-model \
+            --request sample_request.json
+
+
+      # -------------------------------------------------------
+      # Login to Azure using GitHub OIDC
+      # -------------------------------------------------------
+
+      - name: Azure Login
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Install Azure ML CLI v2 extension
-        run: |
-          az extension add -n ml -y
-          az extension update -n ml
 
-      - name: Configure Azure ML workspace
+      # -------------------------------------------------------
+      # Install Azure ML CLI extension
+      # -------------------------------------------------------
+
+      - name: Install Azure ML CLI
         run: |
-          az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
-          az configure --defaults group=${{ vars.AZURE_RESOURCE_GROUP }} workspace=${{ vars.AZURE_ML_WORKSPACE }} location=${{ vars.AZURE_LOCATION }}
+          az extension add --name ml --yes || true
+          az extension update --name ml
+
+
+      # -------------------------------------------------------
+      # Verify Azure context
+      # -------------------------------------------------------
+
+      - name: Verify Azure environment
+        run: |
+          az account set \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+
+          az account show \
+            --query "{Subscription:name,SubscriptionId:id,Tenant:tenantId}" \
+            -o table
+
+          az ml workspace show \
+            --name "${{ vars.AZURE_ML_WORKSPACE }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            -o table
+
+
+      # -------------------------------------------------------
+      # Determine next Azure ML technical model version
+      #
+      # Existing:
+      # ue-rating-model:1
+      #
+      # First GitHub deployment:
+      # ue-rating-model:2
+      # -------------------------------------------------------
+
+      - name: Determine next Azure ML model version
+        id: aml_version
+        shell: bash
+        run: |
+
+          MODEL_NAME="${{ vars.AML_MODEL_NAME }}"
+
+          EXISTING_VERSIONS=$(az ml model list \
+            --name "$MODEL_NAME" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --workspace-name "${{ vars.AZURE_ML_WORKSPACE }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --query "[].version" \
+            -o tsv || true)
+
+          echo "Existing versions:"
+          echo "$EXISTING_VERSIONS"
+
+          if [ -z "$EXISTING_VERSIONS" ]; then
+
+            NEXT_VERSION=1
+
+          else
+
+            LAST_VERSION=$(echo "$EXISTING_VERSIONS" \
+              | grep -E '^[0-9]+$' \
+              | sort -n \
+              | tail -1)
+
+            NEXT_VERSION=$((LAST_VERSION + 1))
+
+          fi
+
+          echo "Next Azure ML model version: $NEXT_VERSION"
+
+          echo "version=$NEXT_VERSION" >> "$GITHUB_OUTPUT"
+
+
+      # -------------------------------------------------------
+      # Register model
+      # -------------------------------------------------------
 
       - name: Register model in Azure ML
         run: |
+
+          echo "Azure ML Model Version:"
+          echo "${{ steps.aml_version.outputs.version }}"
+
           az ml model create \
-            --name ue-rating-model \
-            --version "${{ inputs.model_version }}" \
-            --path "artifacts/rating-model-v${{ inputs.model_version }}" \
+            --name "${{ vars.AML_MODEL_NAME }}" \
+            --version "${{ steps.aml_version.outputs.version }}" \
+            --path "artifacts/rating-model" \
             --type custom_model \
-            --tags python=3.14 sklearn=1.9.0 lifecycle=POC
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --workspace-name "${{ vars.AZURE_ML_WORKSPACE }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --tags \
+              businessModelVersion="${{ steps.business_version.outputs.version }}" \
+              gitCommit="${{ github.sha }}" \
+              githubRun="${{ github.run_id }}" \
+              python="3.14" \
+              lifecycle="GitHub-CICD"
 
-      - name: Build/register Python 3.14 BYOC inference environment
-        run: |
-          az ml environment create -f azureml/environment-py314.yml
 
-      - name: Create endpoint if missing
-        run: |
-          az ml online-endpoint show -n ue-rating-model-endpoint || az ml online-endpoint create -f azureml/endpoint.yml
+      # -------------------------------------------------------
+      # Show registered model
+      # -------------------------------------------------------
 
-      - name: Deploy v1 blue or v2 green
+      - name: Verify registered model
         run: |
-          if [ "${{ inputs.model_version }}" = "1" ]; then
-            az ml online-deployment create -f azureml/deployment-v1.yml --all-traffic
-          else
-            az ml online-deployment create -f azureml/deployment-v2.yml
-            az ml online-endpoint update -n ue-rating-model-endpoint --traffic blue=90 green=10
-          fi
 
-      - name: Smoke test Azure ML endpoint
+          az ml model show \
+            --name "${{ vars.AML_MODEL_NAME }}" \
+            --version "${{ steps.aml_version.outputs.version }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --workspace-name "${{ vars.AZURE_ML_WORKSPACE }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            -o table
+
+
+      # -------------------------------------------------------
+      # UPDATE existing BLUE deployment
+      #
+      # Important:
+      # We are NOT creating another endpoint.
+      # We are NOT creating another deployment.
+      #
+      # Only model underneath BLUE changes.
+      # -------------------------------------------------------
+
+      - name: Update existing Azure ML deployment
         run: |
-          az ml online-endpoint invoke -n ue-rating-model-endpoint --request-file sample_request.json
+
+          MODEL_REFERENCE="azureml:${{ vars.AML_MODEL_NAME }}:${{ steps.aml_version.outputs.version }}"
+
+          echo "Updating deployment:"
+          echo "${{ vars.AML_DEPLOYMENT_NAME }}"
+
+          echo "New model:"
+          echo "$MODEL_REFERENCE"
+
+          az ml online-deployment update \
+            --name "${{ vars.AML_DEPLOYMENT_NAME }}" \
+            --endpoint-name "${{ vars.AML_ENDPOINT_NAME }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --workspace-name "${{ vars.AZURE_ML_WORKSPACE }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --set model="$MODEL_REFERENCE"
+
+
+      # -------------------------------------------------------
+      # Verify deployment
+      # -------------------------------------------------------
+
+      - name: Verify deployment
+        run: |
+
+          az ml online-deployment show \
+            --name "${{ vars.AML_DEPLOYMENT_NAME }}" \
+            --endpoint-name "${{ vars.AML_ENDPOINT_NAME }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --workspace-name "${{ vars.AZURE_ML_WORKSPACE }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --query "{Name:name,State:provisioning_state,Model:model}" \
+            -o table
+
+
+      # -------------------------------------------------------
+      # Azure ML smoke test
+      # -------------------------------------------------------
+
+      - name: Test Azure ML endpoint
+        run: |
+
+          az ml online-endpoint invoke \
+            --name "${{ vars.AML_ENDPOINT_NAME }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --workspace-name "${{ vars.AZURE_ML_WORKSPACE }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --request-file sample_request.json
