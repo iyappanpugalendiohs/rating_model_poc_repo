@@ -20,8 +20,8 @@ from sklearn.pipeline import Pipeline
 
 STATES = ["NY", "NJ", "PA", "CA", "TX"]
 LOBS = ["property", "general_liability", "package"]
-STATE_FACTORS_V1 = {"NY": 1.18, "NJ": 1.12, "PA": 1.05, "CA": 1.30, "TX": 1.22}
-STATE_FACTORS_V2 = {"NY": 1.16, "NJ": 1.11, "PA": 1.04, "CA": 1.28, "TX": 1.20}
+STATE_FACTORS_V1 = {"NY": 1.25, "NJ": 1.12, "PA": 1.05, "CA": 1.30, "TX": 1.22}
+STATE_FACTORS_V2 = {"NY": 1.35, "NJ": 1.21, "PA": 1.04, "CA": 1.28, "TX": 1.20}
 LOB_FACTORS = {"property": 1.00, "general_liability": 1.16, "package": 1.24}
 
 
