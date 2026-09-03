@@ -5,7 +5,7 @@ description: Registered Rating Model v1 on Python 3.14 BYOC runtime.
 model: azureml:ue-rating-model:1
 model_mount_path: /var/ue-model
 environment: azureml:ue-rating-py314:1
-instance_type: Standard_DS3_v2
+instance_type: Standard_DS2_v2
 instance_count: 1
 app_insights_enabled: true
 request_settings:
