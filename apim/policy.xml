@@ -1,26 +1,37 @@
 <policies>
   <inbound>
     <base />
-    <set-header name="x-correlation-id" exists-action="skip">
-      <value>@(context.RequestId.ToString())</value>
-    </set-header>
+
+    <!-- Route APIM requests to the Azure ML Managed Online Endpoint backend. -->
+    <set-backend-service base-url="{{aml-backend-base}}" />
+
+    <!-- APIM authenticates to Azure ML. Client applications never see the Azure ML endpoint key. -->
     <set-header name="Authorization" exists-action="override">
       <value>Bearer {{aml-endpoint-key}}</value>
     </set-header>
+
     <set-header name="Content-Type" exists-action="override">
       <value>application/json</value>
     </set-header>
-    <rate-limit-by-key calls="60" renewal-period="60" counter-key="@(context.Subscription?.Key ?? context.Request.IpAddress)" />
-    <quota-by-key calls="10000" renewal-period="2592000" counter-key="@(context.Subscription?.Key ?? context.Request.IpAddress)" />
-    <set-backend-service base-url="{{aml-scoring-uri}}" />
+
+    <!-- Correlation ID for traceability across APIM, Azure ML, logs, and test scripts. -->
+    <set-header name="x-correlation-id" exists-action="skip">
+      <value>@(context.RequestId.ToString())</value>
+    </set-header>
+
+    <!-- POC throttle. Adjust for production capacity and consumer-specific policies. -->
+    <rate-limit calls="60" renewal-period="60" />
   </inbound>
+
   <backend>
-    <base />
+    <forward-request timeout="60" />
   </backend>
+
   <outbound>
     <base />
     <set-header name="x-powered-by" exists-action="delete" />
   </outbound>
+
   <on-error>
     <base />
     <set-header name="x-correlation-id" exists-action="override">

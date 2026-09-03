@@ -1,15 +1,10 @@
 $schema: https://azuremlschemas.azureedge.net/latest/managedOnlineDeployment.schema.json
 name: green
 endpoint_name: ue-rating-model-endpoint
-description: Rating model version 2 deployment for blue/green release demonstration.
-model:
-  path: ../model
-code_configuration:
-  code: ../src
-  scoring_script: score.py
-environment:
-  conda_file: ./conda.yml
-  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+description: Registered Rating Model v2 canary on Python 3.14 BYOC runtime.
+model: azureml:ue-rating-model:2
+model_mount_path: /var/ue-model
+environment: azureml:ue-rating-py314:1
 instance_type: Standard_DS3_v2
 instance_count: 1
 app_insights_enabled: true

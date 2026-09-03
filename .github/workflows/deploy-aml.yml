@@ -1,46 +1,84 @@
-name: Deploy to Azure ML
+name: Build, Register and Deploy Rating Model - Python 3.14
 on:
   workflow_dispatch:
     inputs:
-      deployment_file:
-        description: Azure ML deployment YAML
+      model_version:
+        description: Azure ML model version to release (1 or 2 for this POC)
         required: true
-        default: azureml/deployment-v1.yml
+        default: '1'
+        type: choice
+        options: ['1', '2']
+
 jobs:
-  deploy:
+  build-register-deploy:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      - name: Validate model package
+          python-version: '3.14'
+
+      - name: Install and test on Python 3.14
         run: |
+          python --version
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pytest -q
+          python -m pip install --only-binary=:all: -r requirements.txt
+          python -m pytest -q
+
+      - name: Build immutable rating-model artifact
+        run: |
+          SEMVER="${{ inputs.model_version }}.0.0"
+          python src/build_rating_model.py --version "$SEMVER" --output-dir "artifacts/rating-model-v${{ inputs.model_version }}"
+          python src/local_artifact_test.py --model-dir "artifacts/rating-model-v${{ inputs.model_version }}" --request sample_request.json
+
       - name: Azure login using OIDC
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - name: Install Azure ML CLI extension
+
+      - name: Install Azure ML CLI v2 extension
         run: |
           az extension add -n ml -y
           az extension update -n ml
-      - name: Configure workspace defaults
+
+      - name: Configure Azure ML workspace
         run: |
+          az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
           az configure --defaults group=${{ vars.AZURE_RESOURCE_GROUP }} workspace=${{ vars.AZURE_ML_WORKSPACE }} location=${{ vars.AZURE_LOCATION }}
+
+      - name: Register model in Azure ML
+        run: |
+          az ml model create \
+            --name ue-rating-model \
+            --version "${{ inputs.model_version }}" \
+            --path "artifacts/rating-model-v${{ inputs.model_version }}" \
+            --type custom_model \
+            --tags python=3.14 sklearn=1.9.0 lifecycle=POC
+
+      - name: Build/register Python 3.14 BYOC inference environment
+        run: |
+          az ml environment create -f azureml/environment-py314.yml
+
       - name: Create endpoint if missing
         run: |
           az ml online-endpoint show -n ue-rating-model-endpoint || az ml online-endpoint create -f azureml/endpoint.yml
-      - name: Deploy model
+
+      - name: Deploy v1 blue or v2 green
         run: |
-          az ml online-deployment create -f ${{ github.event.inputs.deployment_file }} --all-traffic
+          if [ "${{ inputs.model_version }}" = "1" ]; then
+            az ml online-deployment create -f azureml/deployment-v1.yml --all-traffic
+          else
+            az ml online-deployment create -f azureml/deployment-v2.yml
+            az ml online-endpoint update -n ue-rating-model-endpoint --traffic blue=90 green=10
+          fi
+
       - name: Smoke test Azure ML endpoint
         run: |
           az ml online-endpoint invoke -n ue-rating-model-endpoint --request-file sample_request.json

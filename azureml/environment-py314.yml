@@ -1,0 +1,17 @@
+$schema: https://azuremlschemas.azureedge.net/latest/environment.schema.json
+name: ue-rating-py314
+version: 1
+description: Python 3.14 BYOC inference environment for the UE Rating Model POC.
+build:
+  path: ./docker
+  dockerfile_path: Dockerfile
+inference_config:
+  liveness_route:
+    port: 8080
+    path: /health
+  readiness_route:
+    port: 8080
+    path: /ready
+  scoring_route:
+    port: 8080
+    path: /score

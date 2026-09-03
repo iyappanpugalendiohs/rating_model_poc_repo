@@ -8,18 +8,18 @@ ApiManagementGatewayLogs
 ApiManagementGatewayLogs
 | where TimeGenerated > ago(24h)
 | where ResponseCode >= 500
-| project TimeGenerated, ApiId, OperationId, ResponseCode, BackendResponseCode, TotalTime, CallerIpAddress, RequestId
+| project TimeGenerated, ApiId, OperationId, ResponseCode, BackendResponseCode, TotalTime, CallerIpAddress, CorrelationId
 | order by TimeGenerated desc
 
 // Azure ML endpoint traffic logs. Table names are created after diagnostic settings are enabled and traffic is generated.
 AmlOnlineEndpointTrafficLog
 | where TimeGenerated > ago(24h)
-| summarize Requests=count(), AvgDurationMs=avg(DurationMs), P95DurationMs=percentile(DurationMs, 95) by EndpointName, DeploymentName, bin(TimeGenerated, 15m)
+| summarize Requests=count(), AvgDurationMs=avg(RequestDurationMs), P95DurationMs=percentile(RequestDurationMs, 95) by EndpointName, DeploymentName, bin(TimeGenerated, 15m)
 | order by TimeGenerated desc
 
 // Azure ML console logs for container exceptions
 AmlOnlineEndpointConsoleLog
 | where TimeGenerated > ago(24h)
 | where Message has_any ("ERROR", "Exception", "Traceback")
-| project TimeGenerated, EndpointName, DeploymentName, InstanceId, Message
+| project TimeGenerated, DeploymentName, InstanceId, Message , OperationName
 | order by TimeGenerated desc

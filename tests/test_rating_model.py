@@ -1,28 +1,24 @@
-from src.rating_model import score_policy
+from pathlib import Path
+import tempfile
+import joblib
+from src.build_rating_model import build
 
 
-def test_rating_model_returns_expected_shape():
-    payload = {
-        "state": "NY",
-        "line_of_business": "property",
-        "building_value": 1250000,
-        "deductible": 10000,
-        "protection_class": 4,
-        "years_in_business": 12,
-        "prior_claims_3yr": 1,
-        "sprinkler": True,
-    }
-    result = score_policy(payload)
-    assert result["status"] if "status" in result else "success"
-    assert result["premium"] > 0
-    assert result["risk_band"] in {"Low", "Medium", "High"}
-    assert result["model_name"] == "ue-rating-model-poc"
-
-
-def test_rating_model_validates_missing_fields():
-    try:
-        score_policy({"state": "NY"})
-    except ValueError as exc:
-        assert "Missing required fields" in str(exc)
-    else:
-        raise AssertionError("Expected ValueError for missing fields")
+def test_build_creates_loadable_artifact():
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "model"
+        build("1.0.0", out)
+        assert (out / "model.joblib").exists()
+        assert (out / "model_metadata.json").exists()
+        model = joblib.load(out / "model.joblib")
+        payload = {
+            "state": "NY",
+            "line_of_business": "property",
+            "building_value": 1250000,
+            "deductible": 10000,
+            "protection_class": 4,
+            "years_in_business": 12,
+            "prior_claims_3yr": 1,
+            "sprinkler": True,
+        }
+        assert float(model.predict([payload])[0]) > 0
