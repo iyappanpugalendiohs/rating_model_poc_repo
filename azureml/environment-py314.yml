@@ -1,7 +1,7 @@
 $schema: https://azuremlschemas.azureedge.net/latest/environment.schema.json
 name: ue-rating-py314
 version: 1
-description: Python 3.14 BYOC inference environment for the UE Rating Model POC.
+description: UE Rating Model Python 3.14 BYOC environment with Azure ML model data collection SDK.
 build:
   path: ./docker
   dockerfile_path: Dockerfile

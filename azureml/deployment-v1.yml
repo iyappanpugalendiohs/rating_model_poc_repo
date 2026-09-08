@@ -1,13 +1,18 @@
 $schema: https://azuremlschemas.azureedge.net/latest/managedOnlineDeployment.schema.json
 name: blue
-endpoint_name: ue-rating-model-endpoint
-description: Registered Rating Model v1 on Python 3.14 BYOC runtime.
-model: azureml:ue-rating-model:1
+endpoint_name: __ENDPOINT_NAME__
+model: __MODEL_REFERENCE__
 model_mount_path: /var/ue-model
 environment: azureml:ue-rating-py314:1
 instance_type: Standard_DS2_v2
 instance_count: 1
 app_insights_enabled: true
-request_settings:
-  request_timeout_ms: 5000
-  max_concurrent_requests_per_instance: 2
+
+data_collector:
+  sampling_rate: 1.0
+  rolling_rate: Minute
+  collections:
+    model_inputs:
+      enabled: true
+    model_outputs:
+      enabled: true

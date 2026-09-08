@@ -8,8 +8,8 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 COPY requirements-runtime.txt /app/requirements-runtime.txt
-RUN python -m pip install --upgrade pip && \
-    python -m pip install -r /app/requirements-runtime.txt
+RUN python -m pip install --upgrade pip \
+    && python -m pip install -r /app/requirements-runtime.txt
 
 COPY server.py /app/server.py
 
