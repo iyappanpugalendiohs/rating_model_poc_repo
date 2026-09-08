@@ -7,6 +7,7 @@ on:
     paths:
       - "src/**"
       - "tests/**"
+      - "azureml/**"
       - "requirements.txt"
       - "sample_request.json"
 
@@ -237,25 +238,198 @@ jobs:
 
 
       # -------------------------------------------------------
-      # UPDATE existing BLUE deployment
+      # Resolve the model reference registered by this run
+      # -------------------------------------------------------
+
+      - name: Define deployment model reference
+        id: model_reference
+        shell: bash
+        run: |
+          MODEL_REFERENCE="azureml:${{ vars.AML_MODEL_NAME }}:${{ steps.aml_version.outputs.version }}"
+
+          echo "Model reference: $MODEL_REFERENCE"
+          echo "reference=$MODEL_REFERENCE" >> "$GITHUB_OUTPUT"
+
+
+      # -------------------------------------------------------
+      # The endpoint must remain stable because APIM points to it.
+      # Create/update only the deployment underneath the endpoint.
+      # -------------------------------------------------------
+
+      - name: Verify Azure ML endpoint exists
+        shell: bash
+        run: |
+          if ! az ml online-endpoint show \
+            --name "${{ vars.AML_ENDPOINT_NAME }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --workspace-name "${{ vars.AZURE_ML_WORKSPACE }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --output none; then
+
+            echo "::error::Azure ML endpoint '${{ vars.AML_ENDPOINT_NAME }}' does not exist."
+            echo "::error::This workflow intentionally keeps the endpoint stable because APIM is already configured to use it."
+            exit 1
+          fi
+
+
+      # -------------------------------------------------------
+      # Determine whether BLUE already exists
       #
-      # Important:
-      # We are NOT creating another endpoint.
-      # We are NOT creating another deployment.
+      # Existing deployment -> update only the model
+      # Missing deployment  -> create BLUE from the deployment YAML
+      # -------------------------------------------------------
+
+      - name: Check Azure ML deployment
+        id: deployment_state
+        shell: bash
+        run: |
+          if az ml online-deployment show \
+            --name "${{ vars.AML_DEPLOYMENT_NAME }}" \
+            --endpoint-name "${{ vars.AML_ENDPOINT_NAME }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --workspace-name "${{ vars.AZURE_ML_WORKSPACE }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --output none 2>/dev/null; then
+
+            echo "Deployment '${{ vars.AML_DEPLOYMENT_NAME }}' exists."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Deployment '${{ vars.AML_DEPLOYMENT_NAME }}' does not exist."
+            echo "It will be created."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+
+      # -------------------------------------------------------
+      # A brand-new deployment needs the referenced Azure ML
+      # environment to exist. Reuse it if already registered.
+      # -------------------------------------------------------
+
+      - name: Ensure inference environment exists
+        if: steps.deployment_state.outputs.exists == 'false'
+        shell: bash
+        run: |
+          ENV_FILE="azureml/environment-py314.yml"
+
+          if [ ! -f "$ENV_FILE" ]; then
+            echo "::error::Missing $ENV_FILE"
+            exit 1
+          fi
+
+          ENV_NAME=$(grep -m1 '^name:' "$ENV_FILE" | cut -d':' -f2- | xargs | tr -d "\"'")
+          ENV_VERSION=$(grep -m1 '^version:' "$ENV_FILE" | cut -d':' -f2- | xargs | tr -d "\"'")
+
+          if [ -z "$ENV_NAME" ] || [ -z "$ENV_VERSION" ]; then
+            echo "::error::$ENV_FILE must contain top-level name and version values."
+            exit 1
+          fi
+
+          echo "Inference environment: $ENV_NAME:$ENV_VERSION"
+
+          if az ml environment show \
+            --name "$ENV_NAME" \
+            --version "$ENV_VERSION" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --workspace-name "${{ vars.AZURE_ML_WORKSPACE }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --output none 2>/dev/null; then
+
+            echo "Environment already exists. Reusing it."
+          else
+            echo "Environment does not exist. Creating it from $ENV_FILE"
+
+            az ml environment create \
+              --file "$ENV_FILE" \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --workspace-name "${{ vars.AZURE_ML_WORKSPACE }}" \
+              --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+              --output none
+          fi
+
+
+      # -------------------------------------------------------
+      # Resolve the deployment template only when BLUE is missing.
       #
-      # Only model underneath BLUE changes.
+      # Expected placeholders in azureml/deployment-v1.template.yml:
+      #   __DEPLOYMENT_NAME__
+      #   __ENDPOINT_NAME__
+      #   __MODEL_REFERENCE__
+      # -------------------------------------------------------
+
+      - name: Prepare new deployment YAML
+        id: deployment_yaml
+        if: steps.deployment_state.outputs.exists == 'false'
+        shell: bash
+        run: |
+          TEMPLATE="azureml/deployment-v1.template.yml"
+          RESOLVED_FILE="$RUNNER_TEMP/deployment-v1-resolved.yml"
+
+          if [ ! -f "$TEMPLATE" ]; then
+            echo "::error::Missing $TEMPLATE"
+            exit 1
+          fi
+
+          MODEL_REFERENCE="${{ steps.model_reference.outputs.reference }}"
+          DEPLOYMENT_NAME="${{ vars.AML_DEPLOYMENT_NAME }}"
+          ENDPOINT_NAME="${{ vars.AML_ENDPOINT_NAME }}"
+
+          sed \
+            -e "s|__DEPLOYMENT_NAME__|$DEPLOYMENT_NAME|g" \
+            -e "s|__ENDPOINT_NAME__|$ENDPOINT_NAME|g" \
+            -e "s|__MODEL_REFERENCE__|$MODEL_REFERENCE|g" \
+            "$TEMPLATE" > "$RESOLVED_FILE"
+
+          if grep -Eq '__[A-Z0-9_]+__' "$RESOLVED_FILE"; then
+            echo "::error::Unresolved placeholder found in deployment YAML:"
+            grep -En '__[A-Z0-9_]+__' "$RESOLVED_FILE" || true
+            exit 1
+          fi
+
+          echo "Resolved deployment YAML:"
+          cat "$RESOLVED_FILE"
+
+          echo "file=$RESOLVED_FILE" >> "$GITHUB_OUTPUT"
+
+
+      # -------------------------------------------------------
+      # CREATE BLUE when it does not exist.
+      #
+      # --all-traffic is appropriate for this POC because BLUE is
+      # the active deployment behind the stable endpoint/APIM path.
+      # -------------------------------------------------------
+
+      - name: Create new Azure ML deployment
+        if: steps.deployment_state.outputs.exists == 'false'
+        shell: bash
+        run: |
+          echo "Creating deployment: ${{ vars.AML_DEPLOYMENT_NAME }}"
+          echo "Model: ${{ steps.model_reference.outputs.reference }}"
+
+          az ml online-deployment create \
+            --name "${{ vars.AML_DEPLOYMENT_NAME }}" \
+            --endpoint-name "${{ vars.AML_ENDPOINT_NAME }}" \
+            --file "${{ steps.deployment_yaml.outputs.file }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --workspace-name "${{ vars.AZURE_ML_WORKSPACE }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --all-traffic
+
+
+      # -------------------------------------------------------
+      # UPDATE BLUE when it already exists.
+      #
+      # Only the registered model reference changes. The endpoint,
+      # environment, instance configuration and data collector remain.
       # -------------------------------------------------------
 
       - name: Update existing Azure ML deployment
+        if: steps.deployment_state.outputs.exists == 'true'
+        shell: bash
         run: |
+          MODEL_REFERENCE="${{ steps.model_reference.outputs.reference }}"
 
-          MODEL_REFERENCE="azureml:${{ vars.AML_MODEL_NAME }}:${{ steps.aml_version.outputs.version }}"
-
-          echo "Updating deployment:"
-          echo "${{ vars.AML_DEPLOYMENT_NAME }}"
-
-          echo "New model:"
-          echo "$MODEL_REFERENCE"
+          echo "Updating deployment: ${{ vars.AML_DEPLOYMENT_NAME }}"
+          echo "New model: $MODEL_REFERENCE"
 
           az ml online-deployment update \
             --name "${{ vars.AML_DEPLOYMENT_NAME }}" \
