@@ -15,7 +15,7 @@ app_insights_enabled: true
 
 data_collector:
   sampling_rate: 1.0
-  rolling_rate: Minute
+  rolling_rate: Hour
 
   collections:
     model_inputs:
