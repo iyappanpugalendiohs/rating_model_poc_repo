@@ -361,7 +361,7 @@ jobs:
         if: steps.deployment_state.outputs.exists == 'false'
         shell: bash
         run: |
-          TEMPLATE="azureml/deployment-v1.template.yml"
+          TEMPLATE="azureml/deployment-v1.yml"
           RESOLVED_FILE="$RUNNER_TEMP/deployment-v1-resolved.yml"
 
           if [ ! -f "$TEMPLATE" ]; then
