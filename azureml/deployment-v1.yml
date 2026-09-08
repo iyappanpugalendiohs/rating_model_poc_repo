@@ -1,18 +1,25 @@
-$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineDeployment.schema.json
-name: blue
+$schema: http://azureml/sdk-2-0/OnlineDeployment.json
+
+name: __DEPLOYMENT_NAME__
 endpoint_name: __ENDPOINT_NAME__
+
 model: __MODEL_REFERENCE__
 model_mount_path: /var/ue-model
-environment: azureml:ue-rating-py314:1
+
+environment: azureml:ue-rating-py314:2
+
 instance_type: Standard_DS2_v2
 instance_count: 1
+
 app_insights_enabled: true
 
 data_collector:
   sampling_rate: 1.0
   rolling_rate: Minute
+
   collections:
     model_inputs:
-      enabled: true
+      enabled: "True"
+
     model_outputs:
-      enabled: true
+      enabled: "True"
